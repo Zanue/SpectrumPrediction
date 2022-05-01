@@ -1,0 +1,23 @@
+{
+    // 使用 IntelliSense 了解相关属性。 
+    // 悬停以查看现有属性的描述。
+    // 欲了解更多信息，请访问: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "main",
+            "type": "python",
+            "request": "launch",
+            "program": "main.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--model_type=MLP", "--data=Spectrum", "--data_path=data/psd.mat" ,
+                "--train_epochs=100", "--learning_rate=1e-3" ,
+                "--seq_len=96", "--label_len=48" ,"--pred_len=96", "--batch_size=32", "--hiden=512" ,
+                "--exp_name=0505_0_hiden512" 
+            ],
+            "env": {"CUDA_VISIBLE_DEVICES":"0"}
+        }
+    ]
+}
