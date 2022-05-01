@@ -60,7 +60,7 @@ parser.add_argument('--do_predict', action='store_true', help='whether to predic
 parser.add_argument('--kernel',type=int,default=3,help='kernel size for conv layer')
 
 # optimization
-parser.add_argument('--num_workers', type=int, default=0, help='data loader num workers')
+parser.add_argument('--num_workers', type=int, default=4, help='data loader num workers')
 parser.add_argument('--itr', type=int, default=3, help='experiments times')
 parser.add_argument('--train_epochs', type=int, default=10, help='train epochs')
 parser.add_argument('--batch_size', type=int, default=32, help='batch size of train input data')
@@ -68,7 +68,7 @@ parser.add_argument('--patience', type=int, default=3, help='early stopping pati
 parser.add_argument('--learning_rate', type=float, default=5e-3, help='optimizer learning rate')
 parser.add_argument('--des', type=str, default='test', help='exp description')
 parser.add_argument('--loss', type=str, default='mse', help='loss function')
-parser.add_argument('--lradj', type=str, default='type1', help='adjust learning rate')
+parser.add_argument('--lradj', type=str, default='type4', help='adjust learning rate')
 parser.add_argument('--use_amp', action='store_true', help='use automatic mixed precision training', default=False)
 
 # GPU
@@ -84,6 +84,7 @@ parser.add_argument('--hiden',type=int,default=128,help='hiden channel')
 parser.add_argument('--layer',type=int,default=7,help='layer of block')
 
 parser.add_argument('--threshold',type=float,default=-106.5, help='threshold of occupancy')
+parser.add_argument('--use_BCELoss',action='store_true', help='if use BCE loss')
 
 args = parser.parse_args()
 
@@ -133,7 +134,7 @@ def vali(vali_data, vali_loader, criterion, epoch, writer, flag='vali'):
             total_ocpy_acc.append(ocpy_acc)
 
             if i == 0:
-                fig = plot_seq_feature(outputs, batch_y, batch_x, flag)
+                fig = plot_seq_feature(outputs, batch_y, batch_x, threshold, flag)
                 writer.add_figure("figure_{}".format(flag), fig, global_step=epoch)
 
     total_loss = np.average(total_loss)
@@ -146,8 +147,9 @@ def train():
     vali_data, vali_loader = data_provider(args,flag='val')
     test_data, test_loader = data_provider(args,flag='test')
     
-    optimizer = optim.SGD(model.parameters(),lr=args.learning_rate,momentum=0.9) 
+    optimizer = optim.SGD(model.parameters(),lr=args.learning_rate,momentum=0.9)
     criterion = nn.MSELoss()
+    criterion_BCE = nn.BCEWithLogitsLoss() if args.use_BCELoss else None
 
     train_steps = len(train_loader)
     writer = SummaryWriter('event/{}'.format(expname))
@@ -162,7 +164,7 @@ def train():
             f.writelines(eachArg + ' : ' + str(value) + '\n')
         f.writelines('------------------end--------------------')
 
-
+    # start train
     best_loss = 0
     for epoch in range(args.train_epochs):
         train_loss = []
@@ -177,22 +179,27 @@ def train():
             batch_y = batch_y.float().to(device) # (B,L,C)
             outputs = model(batch_x) # (B,L,C)
             batch_y = batch_y[:, -args.pred_len:, :].to(device)
-            
-            loss = criterion(outputs, batch_y)
-            train_loss.append(loss.item())
-            loss.backward()
-            optimizer.step()
-            
 
             threshold = threshold.float().unsqueeze(1).repeat(1, outputs.shape[1], 1).to(device)
             pred_ocpy = (outputs > threshold)
             true_ocpy = (batch_y > threshold)
             ocpy_acc = torch.mean((~(pred_ocpy^true_ocpy)).float()).detach().cpu().numpy()
             train_ocpy_acc.append(ocpy_acc)
-
+            
+            loss = criterion(outputs, batch_y)
+            train_loss.append(loss.item())
+            loss_BCE = 0
+            if args.use_BCELoss:
+                loss_BCE = criterion_BCE(outputs-threshold, true_ocpy.float())
+                loss += loss_BCE
+                loss_BCE = loss_BCE.item()
+            loss.backward()
+            optimizer.step()
+            
 
             if (i+1) % (train_steps//5) == 0:
-                print("\titers: {0}, epoch: {1} | loss: {2:.7f} ocpy_acc: {3:.4f}".format(i + 1, epoch + 1, loss.item(), ocpy_acc))
+                print("\titers: {0}, epoch: {1} | loss_MSE: {2:.7f} loss_BCE: {3:.7f} ocpy_acc: {4:.4f}".format( \
+                    i + 1, epoch + 1, loss.item()-loss_BCE, loss_BCE, ocpy_acc))
 
 
         print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
@@ -206,7 +213,7 @@ def train():
             Train Loss: {4:.7f} Vali Loss: {5:.7f} Test Loss: {6:.7f}".format(
             epoch + 1, train_ocpy_acc, vali_ocpy_acc, test_ocpy_acc, train_loss, vali_loss, test_loss))
 
-        fig = plot_seq_feature(outputs, batch_y, batch_x)
+        fig = plot_seq_feature(outputs, batch_y, batch_x, threshold)
         writer.add_figure("figure_train", fig, global_step=epoch)
         writer.add_scalar('train_ocpy_acc', train_ocpy_acc, global_step=epoch)
         writer.add_scalar('vali_ocpy_acc', vali_ocpy_acc, global_step=epoch)
