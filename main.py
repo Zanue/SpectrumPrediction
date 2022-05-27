@@ -180,26 +180,20 @@ def train():
             outputs = model(batch_x) # (B,L,C)
             batch_y = batch_y[:, -args.pred_len:, :].to(device)
 
-            threshold = threshold.float().unsqueeze(1).repeat(1, outputs.shape[1], 1).to(device)
-            pred_ocpy = (outputs > threshold)
-            true_ocpy = (batch_y > threshold)
-            ocpy_acc = torch.mean((~(pred_ocpy^true_ocpy)).float()).detach().cpu().numpy()
-            train_ocpy_acc.append(ocpy_acc)
-            
             loss = criterion(outputs, batch_y)
             train_loss.append(loss.item())
-            loss_BCE = 0
-            if args.use_BCELoss:
-                loss_BCE = criterion_BCE(outputs-threshold, true_ocpy.float())
-                loss += loss_BCE
-                loss_BCE = loss_BCE.item()
             loss.backward()
             optimizer.step()
             
 
             if (i+1) % (train_steps//5) == 0:
-                print("\titers: {0}, epoch: {1} | loss_MSE: {2:.7f} loss_BCE: {3:.7f} ocpy_acc: {4:.4f}".format( \
-                    i + 1, epoch + 1, loss.item()-loss_BCE, loss_BCE, ocpy_acc))
+                threshold = threshold.float().unsqueeze(1).repeat(1, outputs.shape[1], 1).to(device)
+                pred_ocpy = (outputs > threshold)
+                true_ocpy = (batch_y > threshold)
+                ocpy_acc = torch.mean((~(pred_ocpy^true_ocpy)).float()).detach().cpu().numpy()
+                train_ocpy_acc.append(ocpy_acc)
+                print("\titers: {0}, epoch: {1} | loss_MSE: {2:.7f}  ocpy_acc: {3:.4f}".format( \
+                    i + 1, epoch + 1, loss.item(), ocpy_acc))
 
 
         print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
