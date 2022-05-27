@@ -47,39 +47,39 @@ def plot_seq_feature(pred_, true_, origin_, threshold_=None, label = "train"):
     return fig
 
 
-def plot_heatmap_feature(pred_, true_, origin_, label = "pred"):
+def plot_heatmap_feature(pred_, true_, label = "pred"):
     assert(pred_.shape == true_.shape)
-
-    pred = pred_.detach().clone()
-    true = true_.detach().clone()
-    origin = origin_.detach().clone()
+    pred = pred_
+    true = true_
 
     if len(pred.shape) == 3:  #BLD
         pred = pred[0]
         true = true[0]
-        origin = origin[0]
-    pred = pred.cpu().numpy()
-    true = true.cpu().numpy()
-    origin = origin.cpu().numpy()
 
-    pred = np.concatenate([origin, pred], axis=0).T # [D, L]
-    true = np.concatenate([origin, true], axis=0).T # [D, L]
-
+    pred = pred.T # [D, L]
+    true = true.T # [D, L]
 
     fig = plt.figure(figsize=(16, 8)) 
-    ax = plt.subplot(1,2,1)
+    ax = plt.subplot(1,3,1)
     plt.imshow(pred)
     plt.colorbar()
     plt.xlabel('Time')
     plt.ylabel('Frequency')
     ax.set_title("pred")
 
-    ax = plt.subplot(1,2,2)
+    ax = plt.subplot(1,3,2)
     plt.imshow(true)
     plt.colorbar()
     plt.xlabel('Time')
     plt.ylabel('Frequency')
     ax.set_title("true")
+
+    ax = plt.subplot(1,3,3)
+    plt.imshow((pred-true))
+    plt.colorbar()
+    plt.xlabel('Time')
+    plt.ylabel('Frequency')
+    ax.set_title("error bar")
 
     return fig
 

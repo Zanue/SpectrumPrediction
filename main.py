@@ -2,7 +2,13 @@ import argparse
 import torch
 from data_provider.data_factory import data_provider
 from torch import optim
-from module.model import TCN, MLP
+# from module.model import TCN, MLP
+from module.tcn.model import TCN
+from module.mlp.mlp import MLP
+from module.informer.model import Informer
+from module.mlpmixer.mlpmixer import MLPMixer
+from module.rnn.rnn import RNNet
+from module.lstm.lstm import LSTMnet
 from torch import nn
 import time
 import numpy as np
@@ -21,9 +27,8 @@ parser.add_argument('--is_training', type=int, default=1, help='status')
 parser.add_argument('--device', type=int, default=0, help='gpu dvice')
 
 #method choose
-parser.add_argument('--use_wv',type=int,default=1,help='-1->only permute in 1d, 0->use repeat,1->use wv,2->use pseudo_wv')
 parser.add_argument('--exp_name', type=str, default='baseline', help='Experiment name')
-parser.add_argument('--model_type', type=str,choices=['TCN', 'MLP', 'swin_Transformer', 'swin_MLP'], \
+parser.add_argument('--model_type', type=str,choices=['TCN', 'MLP', 'informer', 'MLPMixer', 'rnn', 'lstm'], \
     default='TCN', help='model type')
 
 # data loader
@@ -31,6 +36,7 @@ parser.add_argument('--data', type=str, default='Spectrum', help='dataset type')
 parser.add_argument('--data_path', type=str, default='data/psd.mat', help='data file')
 parser.add_argument('--save_dir',type=str,default='/media/ps/passport1/time-series-forecasting/after_data')
 parser.add_argument('--checkpoints', type=str, default='./checkpoints/', help='location of model checkpoints')
+parser.add_argument('--freq', type=str, default='h', help='freq for time features encoding')
 
 # forecasting task
 parser.add_argument('--seq_len', type=int, default=96, help='input sequence length')
@@ -38,15 +44,16 @@ parser.add_argument('--label_len', type=int, default=48, help='start token lengt
 parser.add_argument('--pred_len', type=int, default=96, help='prediction sequence length')
 
 # model define
-parser.add_argument('--enc_in', type=int, default=7, help='encoder input size')
-parser.add_argument('--dec_in', type=int, default=7, help='decoder input size')
-parser.add_argument('--c_out', type=int, default=7, help='output size')
+parser.add_argument('--enc_in', type=int, default=2048, help='encoder input size')
+parser.add_argument('--dec_in', type=int, default=2048, help='decoder input size')
+parser.add_argument('--c_out', type=int, default=2048, help='output size')
 parser.add_argument('--d_model', type=int, default=512, help='dimension of model')
 parser.add_argument('--n_heads', type=int, default=8, help='num of heads')
 parser.add_argument('--e_layers', type=int, default=2, help='num of encoder layers')
 parser.add_argument('--d_layers', type=int, default=1, help='num of decoder layers')
 parser.add_argument('--d_ff', type=int, default=2048, help='dimension of fcn')
 parser.add_argument('--moving_avg', default=[24], help='window size of moving average')
+parser.add_argument('--attn', type=str, default='prob', help='attention used in encoder, options:[prob, full]')
 parser.add_argument('--factor', type=int, default=1, help='attn factor')
 parser.add_argument('--distil', action='store_false',
                     help='whether to use distilling in encoder, using this argument means not using distilling',
@@ -58,6 +65,7 @@ parser.add_argument('--activation', type=str, default='gelu', help='activation')
 parser.add_argument('--output_attention', action='store_true', help='whether to output attention in ecoder')
 parser.add_argument('--do_predict', action='store_true', help='whether to predict unseen future data')
 parser.add_argument('--kernel',type=int,default=3,help='kernel size for conv layer')
+parser.add_argument('--mix', action='store_false', help='use mix attention in generative decoder', default=True)
 
 # optimization
 parser.add_argument('--num_workers', type=int, default=4, help='data loader num workers')
@@ -80,11 +88,12 @@ parser.add_argument('--devices', type=str, default='0,1', help='device ids of mu
 parser.add_argument('--check_point',type=str,default='checkpoint',help='check point path')
 
 #hiden layer
-parser.add_argument('--hiden',type=int,default=128,help='hiden channel')
+parser.add_argument('--hiden',type=int,default=2048,help='hiden channel')
 parser.add_argument('--layer',type=int,default=7,help='layer of block')
+parser.add_argument('--rnn_layers',type=int,default=1,help='rnn layers num')
 
 parser.add_argument('--threshold',type=float,default=-106.5, help='threshold of occupancy')
-parser.add_argument('--use_BCELoss',action='store_true', help='if use BCE loss')
+
 
 args = parser.parse_args()
 
@@ -93,20 +102,51 @@ args.use_gpu = True if torch.cuda.is_available() and args.use_gpu else False
 print('Args in experiment:')
 print(args)
 
+device = "cuda:{}".format(args.device) if torch.cuda.is_available() else "cpu"
 
 if args.model_type == 'TCN':
     num_channels = [args.hiden] * args.layer
     model = TCN(args.enc_in,num_channels,args.kernel,args.dropout,args.seq_len,args.pred_len)
+    expname = '{}/{}/{}_in{}out{}_hiden{}_layer{}_lr{}_bs{}_epoch{}' \
+        .format(args.data, args.model_type, \
+            args.exp_name, args.seq_len, args.pred_len, args.hiden, args.layer, \
+                args.learning_rate, args.batch_size, args.train_epochs)
 elif args.model_type == 'MLP':
     model = MLP(args.seq_len,args.pred_len, middle=args.hiden)
-print(model)
-
-device = "cuda:{}".format(args.device) if torch.cuda.is_available() else "cpu"
-model.to(device)  
-expname = '{}/{}/{}_in{}out{}_dropout{}_lr{}_bs{}_epoch{}' \
+    expname = '{}/{}/{}_in{}out{}_middle{}_lr{}_bs{}_epoch{}' \
         .format(args.data, args.model_type, \
-            args.exp_name, args.seq_len, args.pred_len, args.dropout, \
+            args.exp_name, args.seq_len, args.pred_len, args.hiden, \
                 args.learning_rate, args.batch_size, args.train_epochs)
+elif args.model_type == 'informer':
+    model = Informer(args.enc_in, args.dec_in,args.c_out, args.seq_len, args.label_len,args.pred_len, \
+        args.factor, args.d_model, args.n_heads, args.e_layers, args.d_layers, args.d_ff, args.dropout, args.attn, \
+        args.embed, args.freq, args.activation, args.output_attention, args.distil, args.mix, device)
+    expname = '{}/{}/{}_in{}out{}_en{}de{}_dmodel{}dff{}_nhead{}_lr{}_bs{}_epoch{}' \
+        .format(args.data, args.model_type, \
+            args.exp_name, args.seq_len, args.pred_len, args.e_layers, args.d_layers, \
+                args.d_model, args.d_layers, args.n_heads, \
+                args.learning_rate, args.batch_size, args.train_epochs)
+elif args.model_type == 'MLPMixer':
+    model = MLPMixer(args.seq_len, args.pred_len, num_channels=args.enc_in, num_blocks=args.layer)
+    expname = '{}/{}/{}_in{}out{}_lr{}_bs{}_blocks{}_epoch{}' \
+        .format(args.data, args.model_type, \
+            args.exp_name, args.seq_len, args.pred_len, \
+                args.learning_rate, args.batch_size, args.layer, args.train_epochs)
+elif args.model_type == 'rnn':
+    model=RNNet(num_layers=args.rnn_layers,seq_len=args.seq_len,pred_len=args.pred_len)
+    expname = '{}/{}/{}_in{}out{}_layer{}_lr{}_bs{}_epoch{}' \
+        .format(args.data, args.model_type, \
+            args.exp_name, args.seq_len, args.pred_len, args.rnn_layers, \
+                args.learning_rate, args.batch_size, args.train_epochs)
+elif args.model_type == 'lstm':
+    model=LSTMnet(num_layers=args.rnn_layers,seq_len=args.seq_len,pred_len=args.pred_len)
+    expname = '{}/{}/{}_in{}out{}_layer{}_lr{}_bs{}_epoch{}' \
+        .format(args.data, args.model_type, \
+            args.exp_name, args.seq_len, args.pred_len, args.rnn_layers, \
+                args.learning_rate, args.batch_size, args.train_epochs)
+
+print(model)
+model.to(device)
 print(expname)
 
 
@@ -119,9 +159,25 @@ def vali(vali_data, vali_loader, criterion, epoch, writer, flag='vali'):
         for i, (batch_x, batch_y, threshold) in enumerate(vali_loader):
             batch_x = batch_x.float().to(device)
             batch_y = batch_y.float()
-
             batch_y = batch_y[:, -args.pred_len:, :].to(device)
-            outputs = model(batch_x)
+            
+            if args.model_type == 'informer':
+                dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
+                dec_inp = torch.cat([batch_y[:,:args.label_len,:], dec_inp], dim=1).float()
+            if args.use_amp:
+                with torch.cuda.amp.autocast():
+                    if args.model_type == 'informer':
+                        outputs = model(batch_x, dec_inp) # (B,L,C)
+                    else:
+                        outputs = model(batch_x) # (B,L,C)
+            else:
+                if args.model_type == 'informer':
+                    dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
+                    dec_inp = torch.cat([batch_y[:,:args.label_len,:], dec_inp], dim=1).float()
+                    outputs = model(batch_x, dec_inp) # (B,L,C)
+                else:
+                    outputs = model(batch_x) # (B,L,C)
+
             pred = outputs.detach().cpu()
             true = batch_y.detach().cpu()
             loss = criterion(pred, true)
@@ -142,6 +198,7 @@ def vali(vali_data, vali_loader, criterion, epoch, writer, flag='vali'):
     model.train()
     return total_loss, total_ocpy_acc
 
+
 def train():
     train_set, train_loader = data_provider(args, "train")
     vali_data, vali_loader = data_provider(args,flag='val')
@@ -149,7 +206,6 @@ def train():
     
     optimizer = optim.SGD(model.parameters(),lr=args.learning_rate,momentum=0.9)
     criterion = nn.MSELoss()
-    criterion_BCE = nn.BCEWithLogitsLoss() if args.use_BCELoss else None
 
     train_steps = len(train_loader)
     writer = SummaryWriter('event/{}'.format(expname))
@@ -164,6 +220,9 @@ def train():
             f.writelines(eachArg + ' : ' + str(value) + '\n')
         f.writelines('------------------end--------------------')
 
+    if args.use_amp:
+        scaler = torch.cuda.amp.GradScaler()
+
     # start train
     best_loss = 0
     for epoch in range(args.train_epochs):
@@ -176,22 +235,45 @@ def train():
 
             # to cuda
             batch_x = batch_x.float().to(device) # (B,L,C)
-            batch_y = batch_y.float().to(device) # (B,L,C)
-            outputs = model(batch_x) # (B,L,C)
-            batch_y = batch_y[:, -args.pred_len:, :].to(device)
+            batch_y = batch_y.float().to(device) 
+            batch_y = batch_y[:, -args.pred_len:, :].to(device) # (B,L,C)
+
+
+            if args.model_type == 'informer':
+                dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
+                dec_inp = torch.cat([batch_y[:,:args.label_len,:], dec_inp], dim=1).float()
+            if args.use_amp:
+                with torch.cuda.amp.autocast():
+                    if args.model_type == 'informer':
+                        outputs = model(batch_x, dec_inp) # (B,L,C)
+                    else:
+                        outputs = model(batch_x) # (B,L,C)
+            else:
+                if args.model_type == 'informer':
+                    dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
+                    dec_inp = torch.cat([batch_y[:,:args.label_len,:], dec_inp], dim=1).float()
+                    outputs = model(batch_x, dec_inp) # (B,L,C)
+                else:
+                    outputs = model(batch_x) # (B,L,C)
+            
+            threshold = threshold.float().unsqueeze(1).repeat(1, outputs.shape[1], 1).to(device)
+            pred_ocpy = (outputs > threshold)
+            true_ocpy = (batch_y > threshold)
+            ocpy_acc = torch.mean((~(pred_ocpy^true_ocpy)).float()).detach().cpu().numpy()
+            train_ocpy_acc.append(ocpy_acc)
 
             loss = criterion(outputs, batch_y)
             train_loss.append(loss.item())
-            loss.backward()
-            optimizer.step()
-            
 
+            if args.use_amp:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
+            
             if (i+1) % (train_steps//5) == 0:
-                threshold = threshold.float().unsqueeze(1).repeat(1, outputs.shape[1], 1).to(device)
-                pred_ocpy = (outputs > threshold)
-                true_ocpy = (batch_y > threshold)
-                ocpy_acc = torch.mean((~(pred_ocpy^true_ocpy)).float()).detach().cpu().numpy()
-                train_ocpy_acc.append(ocpy_acc)
                 print("\titers: {0}, epoch: {1} | loss_MSE: {2:.7f}  ocpy_acc: {3:.4f}".format( \
                     i + 1, epoch + 1, loss.item(), ocpy_acc))
 
@@ -216,6 +298,7 @@ def train():
         writer.add_scalar('vali_loss', vali_loss, global_step=epoch)
         writer.add_scalar('test_loss', test_loss, global_step=epoch)
         
+
         ckpt_path = os.path.join(args.check_point, expname)
         if not os.path.exists(ckpt_path):
             os.makedirs(ckpt_path)
@@ -250,9 +333,25 @@ def test(setting='setting',test=1):
         for i, (batch_x, batch_y, threshold) in enumerate(test_loader):
             batch_x = batch_x.float().to(device)
             batch_y = batch_y.float().to(device)
-
-            outputs = model(batch_x)
             batch_y = batch_y[:, -args.pred_len:, :].to(device)
+
+            if args.model_type == 'informer':
+                dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
+                dec_inp = torch.cat([batch_y[:,:args.label_len,:], dec_inp], dim=1).float()
+            if args.use_amp:
+                with torch.cuda.amp.autocast():
+                    if args.model_type == 'informer':
+                        outputs = model(batch_x, dec_inp) # (B,L,C)
+                    else:
+                        outputs = model(batch_x) # (B,L,C)
+            else:
+                if args.model_type == 'informer':
+                    dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
+                    dec_inp = torch.cat([batch_y[:,:args.label_len,:], dec_inp], dim=1).float()
+                    outputs = model(batch_x, dec_inp) # (B,L,C)
+                else:
+                    outputs = model(batch_x) # (B,L,C)
+            
             outputs = outputs.detach().cpu().numpy()
             batch_y = batch_y.detach().cpu().numpy()
 
@@ -311,16 +410,35 @@ def pred():
             # speed test     
             batch_x = batch_x.float().to(device)
             batch_y = batch_y.float().to(device)
+            batch_y = batch_y[:, -args.pred_len:, :].to(device)
 
             if i == 1:
+                if args.model_type == 'informer':
+                    dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
+                    dec_inp = torch.cat([batch_y[:,:args.label_len,:], dec_inp], dim=1).float()
                 with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=False, profile_memory=False) as prof:
-                    outputs = model(batch_x)
+                    if args.use_amp:
+                        with torch.cuda.amp.autocast():
+                            if args.model_type == 'informer':
+                                outputs = model(batch_x, dec_inp) # (B,L,C)
+                            else:
+                                outputs = model(batch_x) # (B,L,C)
+                    else:
+                        if args.model_type == 'informer':
+                            outputs = model(batch_x, dec_inp) # (B,L,C)
+                        else:
+                            outputs = model(batch_x) # (B,L,C)
                 print(prof.table())
                 prof.export_chrome_trace(folder_path + '/profile.json')
                 break
 
-            outputs = model(batch_x)
-            batch_y = batch_y[:, -args.pred_len:, :].to(device)
+            if args.model_type == 'informer':
+                dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
+                dec_inp = torch.cat([batch_y[:,:args.label_len,:], dec_inp], dim=1).float()
+                outputs = model(batch_x, dec_inp) # (B,L,C)
+            else:
+                outputs = model(batch_x) # (B,L,C)
+
             outputs = outputs.detach().cpu().numpy()
             batch_y = batch_y.detach().cpu().numpy()
 
@@ -330,8 +448,8 @@ def pred():
             preds.append(pred)
             trues.append(true)
 
-            fig = plot_heatmap_feature(outputs, batch_y, batch_x)
-            plt.savefig('heatmap_{}'.format(i))
+            fig = plot_heatmap_feature(outputs, batch_y)
+            plt.savefig(folder_path + '/heatmap_{}.jpg'.format(i))
 
             
     preds = np.array(preds)

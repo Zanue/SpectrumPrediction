@@ -7,3 +7,5 @@
 *.pdf
 *.png
 *.jpg
+*.pyc
+*.json

@@ -73,7 +73,8 @@ class Dataset_Spectrum(Dataset):
             data = data
 
         self.data_x = data[border1:border2]
-        self.data_y = data[border1:border2]
+
+        print("dataset shape: ", self.data_x.shape)
 
     def __getitem__(self, index):
         s_begin = index
@@ -82,7 +83,7 @@ class Dataset_Spectrum(Dataset):
         r_end = r_begin + self.label_len + self.pred_len
 
         seq_x = self.data_x[s_begin:s_end]
-        seq_y = self.data_y[r_begin:r_end]
+        seq_y = self.data_x[r_begin:r_end]
 
         return seq_x, seq_y, self.threshold
 
