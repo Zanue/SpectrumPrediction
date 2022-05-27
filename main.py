@@ -301,7 +301,7 @@ def test(setting='setting',test=1):
     return
 
 def pred():
-    test_data, test_loader = data_provider(args,flag='pred')
+    test_data, test_loader = data_provider(args,flag='test')
     print('-------------------loading model-------------------')
     model.load_state_dict(torch.load(os.path.join(args.check_point, expname, 'valid_best_checkpoint.pth')))
 
@@ -314,16 +314,16 @@ def pred():
     model.eval()
     with torch.no_grad():
         for i, (batch_x, batch_y, threshold) in enumerate(test_loader):
-            # speed test
+            # speed test     
+            batch_x = batch_x.float().to(device)
+            batch_y = batch_y.float().to(device)
+
             if i == 1:
                 with torch.autograd.profiler.profile(enabled=True, use_cuda=True, record_shapes=False, profile_memory=False) as prof:
                     outputs = model(batch_x)
                 print(prof.table())
                 prof.export_chrome_trace(folder_path + '/profile.json')
                 break
-        
-            batch_x = batch_x.float().to(device)
-            batch_y = batch_y.float().to(device)
 
             outputs = model(batch_x)
             batch_y = batch_y[:, -args.pred_len:, :].to(device)
