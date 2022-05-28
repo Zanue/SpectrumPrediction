@@ -19,7 +19,7 @@ class MLP(nn.Module):
         )
 
         self.skip = nn.Linear(input_len, middle)
-        self.act = nn.ReLU()
+        self.act = nn.ReLU(inplace=True)
 
         self.init_weights()
 

@@ -3,10 +3,10 @@ export CUDA_VISIBLE_DEVICES=1
 # 1s -> 2440 points
 
 # MLP
-# python main.py --model_type=MLP --data=Spectrum --data_path=data/psd.mat \
-#     --train_epochs=40 --learning_rate=1e-2 \
-#     --seq_len=32 --label_len=0 --pred_len=128 --batch_size=32 --hiden=1024 \
-#     --exp_name=0527_0_hiden1024
+python main.py --model_type=MLP --data=Spectrum --data_path=data/psd.mat \
+    --train_epochs=40 --learning_rate=1e-2 \
+    --seq_len=32 --label_len=0 --pred_len=128 --batch_size=32 --hiden=1024 \
+    --exp_name=0527_0 --use_amp
 
 
 # informer
@@ -39,7 +39,7 @@ export CUDA_VISIBLE_DEVICES=1
 
 
 # LSTM
-python main.py --model_type=lstm --data=Spectrum --data_path=data/psd.mat \
-    --train_epochs=40 --learning_rate=1e-2 --num_workers=4 \
-    --seq_len=32 --label_len=0 --pred_len=128 --batch_size=32 --rnn_layers=1 \
-    --exp_name=0527_0 --use_amp
+# python main.py --model_type=lstm --data=Spectrum --data_path=data/psd.mat \
+#     --train_epochs=40 --learning_rate=1e-2 --num_workers=4 \
+#     --seq_len=32 --label_len=0 --pred_len=128 --batch_size=32 --rnn_layers=1 \
+#     --exp_name=0527_0 --use_amp

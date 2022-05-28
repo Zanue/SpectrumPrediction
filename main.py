@@ -18,7 +18,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.tensorboard import SummaryWriter
 from utils.pyplot import plot_seq_feature, plot_heatmap_feature
-
+from thop import profile
+from thop import clever_format
 
 
 parser = argparse.ArgumentParser(description='Sequence Modeling - The Adding Problem')
@@ -93,6 +94,7 @@ parser.add_argument('--layer',type=int,default=7,help='layer of block')
 parser.add_argument('--rnn_layers',type=int,default=1,help='rnn layers num')
 
 parser.add_argument('--threshold',type=float,default=-106.5, help='threshold of occupancy')
+parser.add_argument('--resume',type=str,default=None, help='resume path')
 
 
 args = parser.parse_args()
@@ -145,7 +147,11 @@ elif args.model_type == 'lstm':
             args.exp_name, args.seq_len, args.pred_len, args.rnn_layers, \
                 args.learning_rate, args.batch_size, args.train_epochs)
 
+
 print(model)
+if args.resume is not None:
+    print('loading model')
+    model.load_state_dict(torch.load(args.resume))
 model.to(device)
 print(expname)
 
@@ -248,6 +254,7 @@ def train():
                         outputs = model(batch_x, dec_inp) # (B,L,C)
                     else:
                         outputs = model(batch_x) # (B,L,C)
+                    loss = criterion(outputs, batch_y)
             else:
                 if args.model_type == 'informer':
                     dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
@@ -255,14 +262,14 @@ def train():
                     outputs = model(batch_x, dec_inp) # (B,L,C)
                 else:
                     outputs = model(batch_x) # (B,L,C)
+                loss = criterion(outputs, batch_y)
             
             threshold = threshold.float().unsqueeze(1).repeat(1, outputs.shape[1], 1).to(device)
             pred_ocpy = (outputs > threshold)
             true_ocpy = (batch_y > threshold)
             ocpy_acc = torch.mean((~(pred_ocpy^true_ocpy)).float()).detach().cpu().numpy()
             train_ocpy_acc.append(ocpy_acc)
-
-            loss = criterion(outputs, batch_y)
+            
             train_loss.append(loss.item())
 
             if args.use_amp:
@@ -412,6 +419,7 @@ def pred():
             batch_y = batch_y.float().to(device)
             batch_y = batch_y[:, -args.pred_len:, :].to(device)
 
+            # latency
             if i == 1:
                 if args.model_type == 'informer':
                     dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
@@ -431,6 +439,28 @@ def pred():
                 print(prof.table())
                 prof.export_chrome_trace(folder_path + '/profile.json')
                 break
+            
+            # param
+            if args.model_type == 'informer':
+                dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
+                dec_inp = torch.cat([batch_y[:,:args.label_len,:], dec_inp], dim=1).float()
+            if args.use_amp:
+                with torch.cuda.amp.autocast():
+                    if args.model_type == 'informer':
+                        flops, params = profile(model, inputs=(batch_x,dec_inp)) 
+                    else:
+                        flops, params = profile(model, inputs=(batch_x,))
+            else:
+                if args.model_type == 'informer':
+                    flops, params = profile(model, inputs=(batch_x,dec_inp))
+                else:
+                    flops, params = profile(model, inputs=(batch_x,))
+
+            flops, params = clever_format([flops, params], "%.3f")
+            print("step{} | flops: {}, params: {}".format(i, flops, params))
+            with open(folder_path + '/model_test.txt','a') as f:
+                f.writelines('step{} | flops: {}, params: {} \n'.format(i, flops, params))
+
 
             if args.model_type == 'informer':
                 dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
