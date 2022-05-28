@@ -1,10 +1,7 @@
 # Spectrum Prediction
 
-```
-export CUDA_VISIBLE_DEVICES=1
-
-python main.py --model_type=MLP --data=Spectrum --data_path=data/psd.mat \
-    --train_epochs=100 --learning_rate=1e-2 \
-    --seq_len=32 --label_len=0 --pred_len=128 --batch_size=32 --hiden=1024 \
-    --exp_name=0501_1_hiden1024
-```
+Contributions:
+1. Implemented multiple models for spectrum prediction ('TCN', 'informer', 'MLPMixer', 'rnn', 'lstm').
+2. Calculated the params and latency of each model (params, latency).
+3. Use automatic mixed precision training (torch.cuda.amp) to reduce the amount of model parameters and inference time while reduce part of the accuracy.
+4. Simulated the attack behavior of the noise radio on the model prediction in the real complex environment (model attack).
