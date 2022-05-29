@@ -91,7 +91,7 @@ parser.add_argument('--hiden',type=int,default=2048,help='hiden channel')
 parser.add_argument('--layer',type=int,default=7,help='layer of block')
 parser.add_argument('--rnn_layers',type=int,default=1,help='rnn layers num')
 
-parser.add_argument('--threshold',type=float,default=-106.5, help='threshold of occupancy')
+parser.add_argument('--threshold',type=float,default=-111.5, help='threshold of occupancy')
 parser.add_argument('--resume',type=str, required=True, help='resume path')
 parser.add_argument('--delta',type=float,default=0.05, help='threshold of occupancy')
 
@@ -174,6 +174,8 @@ class Attack(nn.Module):
 def vali(vali_data, vali_loader,att, criterion, epoch, writer, flag='vali'):
     total_loss = []
     total_ocpy_acc = []
+    total_false_alarm = []
+    total_missing_alarm = []
     model.eval()
     with torch.no_grad():
         for i, (batch_x, batch_y, threshold) in enumerate(vali_loader):
@@ -193,11 +195,16 @@ def vali(vali_data, vali_loader,att, criterion, epoch, writer, flag='vali'):
             loss = (criterion(outputs, att.adversarial_target) - criterion(outputs, batch_y)).item()
             total_loss.append(loss)
 
-            threshold = threshold.float().unsqueeze(1).repeat(1, outputs.shape[1], 1).to(device)
+            # threshold = threshold.float().unsqueeze(1).repeat(1, outputs.shape[1], 1).to(device)
+            threshold = threshold.float().unsqueeze(1).unsqueeze(2).repeat(1, outputs.shape[1], outputs.shape[2]).to(device)
             pred_ocpy = (outputs > threshold)
             true_ocpy = (batch_y > threshold)
             ocpy_acc = torch.mean((~(pred_ocpy^true_ocpy)).float()).detach().cpu().numpy()
             total_ocpy_acc.append(ocpy_acc)
+            false_alarm = torch.mean((pred_ocpy&(~true_ocpy)).float()).detach().cpu().numpy()
+            total_false_alarm.append(false_alarm)
+            missing_alarm = torch.mean(((~pred_ocpy)&true_ocpy).float()).detach().cpu().numpy()
+            total_missing_alarm.append(missing_alarm)
 
             if i == 0:
                 fig = plot_seq_feature(outputs, batch_y, batch_x, threshold, flag)
@@ -205,8 +212,10 @@ def vali(vali_data, vali_loader,att, criterion, epoch, writer, flag='vali'):
 
     total_loss = np.average(total_loss)
     total_ocpy_acc = np.average(total_ocpy_acc)
+    total_false_alarm = np.average(total_false_alarm)
+    total_missing_alarm = np.average(total_missing_alarm)
     model.train()
-    return total_loss, total_ocpy_acc
+    return total_loss, total_ocpy_acc, total_false_alarm, total_missing_alarm
 
 
 def train():
@@ -238,7 +247,9 @@ def train():
     for epoch in range(args.train_epochs):
         train_loss = []
         train_ocpy_acc = []
-        model.eval()
+        train_false_alarm = []
+        train_missing_alarm = []
+        model.train()
         epoch_time = time.time()
         for i, (batch_x, batch_y, threshold) in enumerate(train_loader):
             optimizer.zero_grad()
@@ -259,11 +270,16 @@ def train():
             loss = criterion(outputs, att.adversarial_target) - criterion(outputs, batch_y)
             
 
-            threshold = threshold.float().unsqueeze(1).repeat(1, outputs.shape[1], 1).to(device)
+            # threshold = threshold.float().unsqueeze(1).repeat(1, outputs.shape[1], 1).to(device)
+            threshold = threshold.float().unsqueeze(1).unsqueeze(2).repeat(1, outputs.shape[1], outputs.shape[2]).to(device)
             pred_ocpy = (outputs > threshold)
             true_ocpy = (batch_y > threshold)
             ocpy_acc = torch.mean((~(pred_ocpy^true_ocpy)).float()).detach().cpu().numpy()
             train_ocpy_acc.append(ocpy_acc)
+            false_alarm = torch.mean((pred_ocpy&(~true_ocpy)).float()).detach().cpu().numpy()
+            train_false_alarm.append(false_alarm)
+            missing_alarm = torch.mean(((~pred_ocpy)&true_ocpy).float()).detach().cpu().numpy()
+            train_missing_alarm.append(missing_alarm)
             
             train_loss.append(loss.item())
 
@@ -271,26 +287,39 @@ def train():
             optimizer.step()
             
             if (i+1) % (train_steps//5) == 0:
-                print("\titers: {0}, epoch: {1} | loss_MSE: {2:.7f}  ocpy_acc: {3:.4f}".format( \
-                    i + 1, epoch + 1, loss.item(), ocpy_acc))
+                print("\titers: {0}, epoch: {1} | loss_MSE: {2:.7f}  ocpy_acc: {3:.4f} false_alarm: {4:.4f} missing_alarm: {5:.4f}".format( \
+                    i + 1, epoch + 1, loss.item(), ocpy_acc, false_alarm, missing_alarm))
 
 
         print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
 
         train_loss = np.average(train_loss)
         train_ocpy_acc = np.average(train_ocpy_acc)
-        vali_loss, vali_ocpy_acc = vali(vali_data, vali_loader, att, criterion, epoch, writer, 'vali')
-        test_loss, test_ocpy_acc = vali(test_data, test_loader, att, criterion, epoch, writer, 'test')
+        train_false_alarm = np.average(train_false_alarm)
+        train_missing_alarm = np.average(train_missing_alarm)
+        vali_loss, vali_ocpy_acc, vali_false_alarm, vali_missing_alarm = vali(vali_data, vali_loader, att, criterion, epoch, writer, 'vali')
+        test_loss, test_ocpy_acc, test_false_alarm, test_missing_alarm = vali(test_data, test_loader, att, criterion, epoch, writer, 'test')
 
         print("Epoch: {0} | Train ocpy_acc: {1:.4f} Vali ocpy_acc: {2:.4f} Test ocpy_acc: {3:.4f} \n\
-            Train Loss: {4:.7f} Vali Loss: {5:.7f} Test Loss: {6:.7f}".format(
-            epoch + 1, train_ocpy_acc, vali_ocpy_acc, test_ocpy_acc, train_loss, vali_loss, test_loss))
+            Train false_alarm: {4:.4f} Vali false_alarm: {5:.4f} Test false_alarm: {6:.4f} \n\
+            Train missing_alarm: {7:.4f} Vali missing_alarm: {8:.4f} Test missing_alarm: {9:.4f} \n\
+            Train Loss: {10:.7f} Vali Loss: {11:.7f} Test Loss: {12:.7f}".format( \
+            epoch + 1, train_ocpy_acc, vali_ocpy_acc, test_ocpy_acc, \
+            train_false_alarm, vali_false_alarm, test_false_alarm, \
+            train_missing_alarm, vali_missing_alarm, test_missing_alarm, \
+            train_loss, vali_loss, test_loss))
 
         fig = plot_seq_feature(outputs, batch_y, batch_x, threshold)
         writer.add_figure("figure_train", fig, global_step=epoch)
         writer.add_scalar('train_ocpy_acc', train_ocpy_acc, global_step=epoch)
         writer.add_scalar('vali_ocpy_acc', vali_ocpy_acc, global_step=epoch)
         writer.add_scalar('test_ocpy_acc', test_ocpy_acc, global_step=epoch)
+        writer.add_scalar('train_false_alarm', train_false_alarm, global_step=epoch)
+        writer.add_scalar('vali_false_alarm', vali_false_alarm, global_step=epoch)
+        writer.add_scalar('test_false_alarm', test_false_alarm, global_step=epoch)
+        writer.add_scalar('train_missing_alarm', train_missing_alarm, global_step=epoch)
+        writer.add_scalar('vali_missing_alarm', vali_missing_alarm, global_step=epoch)
+        writer.add_scalar('test_missing_alarm', test_missing_alarm, global_step=epoch)
         writer.add_scalar('train_loss', train_loss, global_step=epoch)
         writer.add_scalar('vali_loss', vali_loss, global_step=epoch)
         writer.add_scalar('test_loss', test_loss, global_step=epoch)

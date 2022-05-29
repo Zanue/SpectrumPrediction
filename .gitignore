@@ -9,3 +9,5 @@
 *.jpg
 *.pyc
 *.json
+exp_results.md
+jpy_test/

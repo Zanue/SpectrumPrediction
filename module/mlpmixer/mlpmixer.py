@@ -1,4 +1,5 @@
 from torch import nn
+import numpy as np
 
 class MlpBlock(nn.Module):
     def __init__(self, input_dim, output_dim, middle=None):
@@ -14,12 +15,13 @@ class MlpBlock(nn.Module):
 
 
 class MixerBlock(nn.Module):
-    def __init__(self, channels_dim, tokens_dim, middle=None):
+    def __init__(self, in_tokens, out_tokens, tokens_dim, middle=None):
         super(MixerBlock, self).__init__()
-        self.norm1 = nn.LayerNorm(channels_dim)
+        self.norm1 = nn.LayerNorm(in_tokens)
         self.mlp_token_mixing = MlpBlock(tokens_dim, tokens_dim)
-        self.norm2 = nn.LayerNorm(channels_dim)
-        self.mlp_channel_mixing = MlpBlock(channels_dim, channels_dim)
+        self.norm2 = nn.LayerNorm(in_tokens)
+        self.mlp_channel_mixing = MlpBlock(in_tokens, out_tokens, middle)
+        self.skip = nn.Linear(in_tokens, out_tokens) if in_tokens != out_tokens else nn.Identity()
 
     def forward(self, x):
         y = self.norm1(x) #[B, C, L]
@@ -28,7 +30,7 @@ class MixerBlock(nn.Module):
         y = y.permute(0,2,1) #[B, C, L]
         x = x + y
         y = self.norm2(x) #[B, C, L]
-        y = x + self.mlp_channel_mixing(y) #[B, C, L]
+        y = self.skip(x) + self.mlp_channel_mixing(y) #[B, C, L]
 
         return y
 
@@ -37,9 +39,10 @@ class MLPMixer(nn.Module):
     def __init__(self, input_len, output_len, num_channels, num_blocks, middle=None):
         super(MLPMixer, self).__init__()
 
+        # middle_layers = np.linspace(input_len, output_len, num_blocks+1, dtype=np.int)
         blocks = []
-        for _ in range(num_blocks):
-            blocks.append(MixerBlock(input_len, num_channels))
+        for i in range(num_blocks):
+            blocks.append(MixerBlock(input_len, input_len, num_channels, middle))
         self.blocks = nn.Sequential(*blocks)
         # self.norm = nn.LayerNorm(input_len)
         self.fc = nn.Linear(input_len, output_len)

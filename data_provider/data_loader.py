@@ -15,8 +15,8 @@ class StandardScaler():
         self.std = 1.
 
     def fit(self, data):
-        self.mean = data.mean(0)
-        self.std = data.std(0)
+        self.mean = data.mean()
+        self.std = data.std()
 
     def transform(self, data):
         mean = torch.from_numpy(self.mean).type_as(data).to(data.device) if torch.is_tensor(data) else self.mean

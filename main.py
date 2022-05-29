@@ -93,7 +93,7 @@ parser.add_argument('--hiden',type=int,default=2048,help='hiden channel')
 parser.add_argument('--layer',type=int,default=7,help='layer of block')
 parser.add_argument('--rnn_layers',type=int,default=1,help='rnn layers num')
 
-parser.add_argument('--threshold',type=float,default=-106.5, help='threshold of occupancy')
+parser.add_argument('--threshold',type=float,default=-111.5, help='threshold of occupancy')
 parser.add_argument('--resume',type=str,default=None, help='resume path')
 
 
@@ -160,6 +160,8 @@ print(expname)
 def vali(vali_data, vali_loader, criterion, epoch, writer, flag='vali'):
     total_loss = []
     total_ocpy_acc = []
+    total_false_alarm = []
+    total_missing_alarm = []
     model.eval()
     with torch.no_grad():
         for i, (batch_x, batch_y, threshold) in enumerate(vali_loader):
@@ -189,11 +191,16 @@ def vali(vali_data, vali_loader, criterion, epoch, writer, flag='vali'):
             loss = criterion(pred, true)
             total_loss.append(loss)
 
-            threshold = threshold.float().unsqueeze(1).repeat(1, outputs.shape[1], 1).to(device)
+            # threshold = threshold.float().unsqueeze(1).repeat(1, outputs.shape[1], 1).to(device)
+            threshold = threshold.float().unsqueeze(1).unsqueeze(2).repeat(1, outputs.shape[1], outputs.shape[2]).to(device)
             pred_ocpy = (outputs > threshold)
             true_ocpy = (batch_y > threshold)
             ocpy_acc = torch.mean((~(pred_ocpy^true_ocpy)).float()).detach().cpu().numpy()
             total_ocpy_acc.append(ocpy_acc)
+            false_alarm = torch.mean((pred_ocpy&(~true_ocpy)).float()).detach().cpu().numpy()
+            total_false_alarm.append(false_alarm)
+            missing_alarm = torch.mean(((~pred_ocpy)&true_ocpy).float()).detach().cpu().numpy()
+            total_missing_alarm.append(missing_alarm)
 
             if i == 0:
                 fig = plot_seq_feature(outputs, batch_y, batch_x, threshold, flag)
@@ -201,8 +208,10 @@ def vali(vali_data, vali_loader, criterion, epoch, writer, flag='vali'):
 
     total_loss = np.average(total_loss)
     total_ocpy_acc = np.average(total_ocpy_acc)
+    total_false_alarm = np.average(total_false_alarm)
+    total_missing_alarm = np.average(total_missing_alarm)
     model.train()
-    return total_loss, total_ocpy_acc
+    return total_loss, total_ocpy_acc, total_false_alarm, total_missing_alarm
 
 
 def train():
@@ -234,6 +243,8 @@ def train():
     for epoch in range(args.train_epochs):
         train_loss = []
         train_ocpy_acc = []
+        train_false_alarm = []
+        train_missing_alarm = []
         model.train()
         epoch_time = time.time()
         for i, (batch_x, batch_y, threshold) in enumerate(train_loader):
@@ -264,11 +275,16 @@ def train():
                     outputs = model(batch_x) # (B,L,C)
                 loss = criterion(outputs, batch_y)
             
-            threshold = threshold.float().unsqueeze(1).repeat(1, outputs.shape[1], 1).to(device)
+            # threshold = threshold.float().unsqueeze(1).repeat(1, outputs.shape[1], 1).to(device)
+            threshold = threshold.float().unsqueeze(1).unsqueeze(2).repeat(1, outputs.shape[1], outputs.shape[2]).to(device)
             pred_ocpy = (outputs > threshold)
             true_ocpy = (batch_y > threshold)
             ocpy_acc = torch.mean((~(pred_ocpy^true_ocpy)).float()).detach().cpu().numpy()
             train_ocpy_acc.append(ocpy_acc)
+            false_alarm = torch.mean((pred_ocpy&(~true_ocpy)).float()).detach().cpu().numpy()
+            train_false_alarm.append(false_alarm)
+            missing_alarm = torch.mean(((~pred_ocpy)&true_ocpy).float()).detach().cpu().numpy()
+            train_missing_alarm.append(missing_alarm)
             
             train_loss.append(loss.item())
 
@@ -281,26 +297,39 @@ def train():
                 optimizer.step()
             
             if (i+1) % (train_steps//5) == 0:
-                print("\titers: {0}, epoch: {1} | loss_MSE: {2:.7f}  ocpy_acc: {3:.4f}".format( \
-                    i + 1, epoch + 1, loss.item(), ocpy_acc))
+                print("\titers: {0}, epoch: {1} | loss_MSE: {2:.7f}  ocpy_acc: {3:.4f} false_alarm: {4:.4f} missing_alarm: {5:.4f}".format( \
+                    i + 1, epoch + 1, loss.item(), ocpy_acc, false_alarm, missing_alarm))
 
 
         print("Epoch: {} cost time: {}".format(epoch + 1, time.time() - epoch_time))
 
         train_loss = np.average(train_loss)
         train_ocpy_acc = np.average(train_ocpy_acc)
-        vali_loss, vali_ocpy_acc = vali(vali_data, vali_loader, criterion, epoch, writer, 'vali')
-        test_loss, test_ocpy_acc = vali(test_data, test_loader, criterion, epoch, writer, 'test')
+        train_false_alarm = np.average(train_false_alarm)
+        train_missing_alarm = np.average(train_missing_alarm)
+        vali_loss, vali_ocpy_acc, vali_false_alarm, vali_missing_alarm = vali(vali_data, vali_loader, criterion, epoch, writer, 'vali')
+        test_loss, test_ocpy_acc, test_false_alarm, test_missing_alarm = vali(test_data, test_loader, criterion, epoch, writer, 'test')
 
         print("Epoch: {0} | Train ocpy_acc: {1:.4f} Vali ocpy_acc: {2:.4f} Test ocpy_acc: {3:.4f} \n\
-            Train Loss: {4:.7f} Vali Loss: {5:.7f} Test Loss: {6:.7f}".format(
-            epoch + 1, train_ocpy_acc, vali_ocpy_acc, test_ocpy_acc, train_loss, vali_loss, test_loss))
+            Train false_alarm: {4:.4f} Vali false_alarm: {5:.4f} Test false_alarm: {6:.4f} \n\
+            Train missing_alarm: {7:.4f} Vali missing_alarm: {8:.4f} Test missing_alarm: {9:.4f} \n\
+            Train Loss: {10:.7f} Vali Loss: {11:.7f} Test Loss: {12:.7f}".format( \
+            epoch + 1, train_ocpy_acc, vali_ocpy_acc, test_ocpy_acc, \
+            train_false_alarm, vali_false_alarm, test_false_alarm, \
+            train_missing_alarm, vali_missing_alarm, test_missing_alarm, \
+            train_loss, vali_loss, test_loss))
 
         fig = plot_seq_feature(outputs, batch_y, batch_x, threshold)
         writer.add_figure("figure_train", fig, global_step=epoch)
         writer.add_scalar('train_ocpy_acc', train_ocpy_acc, global_step=epoch)
         writer.add_scalar('vali_ocpy_acc', vali_ocpy_acc, global_step=epoch)
         writer.add_scalar('test_ocpy_acc', test_ocpy_acc, global_step=epoch)
+        writer.add_scalar('train_false_alarm', train_false_alarm, global_step=epoch)
+        writer.add_scalar('vali_false_alarm', vali_false_alarm, global_step=epoch)
+        writer.add_scalar('test_false_alarm', test_false_alarm, global_step=epoch)
+        writer.add_scalar('train_missing_alarm', train_missing_alarm, global_step=epoch)
+        writer.add_scalar('vali_missing_alarm', vali_missing_alarm, global_step=epoch)
+        writer.add_scalar('test_missing_alarm', test_missing_alarm, global_step=epoch)
         writer.add_scalar('train_loss', train_loss, global_step=epoch)
         writer.add_scalar('vali_loss', vali_loss, global_step=epoch)
         writer.add_scalar('test_loss', test_loss, global_step=epoch)
@@ -420,7 +449,7 @@ def pred():
             batch_y = batch_y[:, -args.pred_len:, :].to(device)
 
             # latency
-            if i == 1:
+            if i == 0:
                 if args.model_type == 'informer':
                     dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
                     dec_inp = torch.cat([batch_y[:,:args.label_len,:], dec_inp], dim=1).float()
@@ -436,82 +465,144 @@ def pred():
                             outputs = model(batch_x, dec_inp) # (B,L,C)
                         else:
                             outputs = model(batch_x) # (B,L,C)
-                print(prof.table())
+                # print(prof.table())
+                print(prof.key_averages().table(sort_by="cpu_time_total", row_limit=10))
                 prof.export_chrome_trace(folder_path + '/profile.json')
                 break
             
             # param
-            if args.model_type == 'informer':
-                dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
-                dec_inp = torch.cat([batch_y[:,:args.label_len,:], dec_inp], dim=1).float()
-            if args.use_amp:
-                with torch.cuda.amp.autocast():
+            if i == 0:
+                if args.model_type == 'informer':
+                    dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
+                    dec_inp = torch.cat([batch_y[:,:args.label_len,:], dec_inp], dim=1).float()
+                if args.use_amp:
+                    with torch.cuda.amp.autocast():
+                        if args.model_type == 'informer':
+                            flops, params = profile(model, inputs=(batch_x,dec_inp)) 
+                        else:
+                            flops, params = profile(model, inputs=(batch_x,))
+                else:
                     if args.model_type == 'informer':
-                        flops, params = profile(model, inputs=(batch_x,dec_inp)) 
+                        flops, params = profile(model, inputs=(batch_x,dec_inp))
                     else:
                         flops, params = profile(model, inputs=(batch_x,))
-            else:
-                if args.model_type == 'informer':
-                    flops, params = profile(model, inputs=(batch_x,dec_inp))
-                else:
-                    flops, params = profile(model, inputs=(batch_x,))
 
-            flops, params = clever_format([flops, params], "%.3f")
-            print("step{} | flops: {}, params: {}".format(i, flops, params))
-            with open(folder_path + '/model_test.txt','a') as f:
-                f.writelines('step{} | flops: {}, params: {} \n'.format(i, flops, params))
+                flops, params = clever_format([flops, params], "%.3f")
+                print("step{} | flops: {}, params: {}".format(i, flops, params))
+                with open(folder_path + '/model_test.txt','a') as f:
+                    f.writelines('step{} | flops: {}, params: {} \n'.format(i, flops, params))
 
 
-            if args.model_type == 'informer':
-                dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
-                dec_inp = torch.cat([batch_y[:,:args.label_len,:], dec_inp], dim=1).float()
-                outputs = model(batch_x, dec_inp) # (B,L,C)
-            else:
-                outputs = model(batch_x) # (B,L,C)
+            # if args.model_type == 'informer':
+            #     dec_inp = torch.zeros([batch_y.shape[0], args.pred_len, batch_y.shape[-1]]).float().to(device)
+            #     dec_inp = torch.cat([batch_y[:,:args.label_len,:], dec_inp], dim=1).float()
+            #     outputs = model(batch_x, dec_inp) # (B,L,C)
+            # else:
+            #     outputs = model(batch_x) # (B,L,C)
 
-            outputs = outputs.detach().cpu().numpy()
-            batch_y = batch_y.detach().cpu().numpy()
+            # outputs = outputs.detach().cpu().numpy()
+            # batch_y = batch_y.detach().cpu().numpy()
 
-            pred = outputs  # outputs.detach().cpu().numpy()  # .squeeze()
-            true = batch_y  # batch_y.detach().cpu().numpy()  # .squeeze()
+            # pred = outputs  # outputs.detach().cpu().numpy()  # .squeeze()
+            # true = batch_y  # batch_y.detach().cpu().numpy()  # .squeeze()
 
-            preds.append(pred)
-            trues.append(true)
+            # preds.append(pred)
+            # trues.append(true)
 
-            fig = plot_heatmap_feature(outputs, batch_y)
-            plt.savefig(folder_path + '/heatmap_{}.jpg'.format(i))
+            # fig = plot_heatmap_feature(outputs, batch_y)
+            # plt.savefig(folder_path + '/heatmap_{}.jpg'.format(i))
 
             
-    preds = np.array(preds)
-    trues = np.array(trues)
-    print('test shape:', preds.shape, trues.shape)
-    preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
-    trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
-    print('test shape:', preds.shape, trues.shape)
+    # preds = np.array(preds)
+    # trues = np.array(trues)
+    # print('test shape:', preds.shape, trues.shape)
+    # preds = preds.reshape(-1, preds.shape[-2], preds.shape[-1])
+    # trues = trues.reshape(-1, trues.shape[-2], trues.shape[-1])
+    # print('test shape:', preds.shape, trues.shape)
 
-    # result save
-    mae, mse, rmse, mape, mspe = metric(preds, trues)
-    print('mse:{}, mae:{}'.format(mse, mae))
+    # # result save
+    # mae, mse, rmse, mape, mspe = metric(preds, trues)
+    # print('mse:{}, mae:{}'.format(mse, mae))
 
-    # log metric and args setting
-    argsDict = args.__dict__
-    with open(folder_path + '/pred_result.txt','w') as f:
-        f.write("metrics  \n")
-        f.write('mse:{}, mae:{}'.format(mse, mae))
-        f.write('\n')
-        f.write('\n')
-        f.writelines('Args  \n')
-        for eachArg,value in argsDict.items():
-            f.writelines(eachArg + ' : ' + str(value) + '\n')
+    # # log metric and args setting
+    # argsDict = args.__dict__
+    # with open(folder_path + '/pred_result.txt','w') as f:
+    #     f.write("metrics  \n")
+    #     f.write('mse:{}, mae:{}'.format(mse, mae))
+    #     f.write('\n')
+    #     f.write('\n')
+    #     f.writelines('Args  \n')
+    #     for eachArg,value in argsDict.items():
+    #         f.writelines(eachArg + ' : ' + str(value) + '\n')
 
     return
 
+def get_inference_time():
+    print('-------------------loading model-------------------')
+    model.load_state_dict(torch.load(os.path.join(args.check_point, expname, 'valid_best_checkpoint.pth')))
+    model.to(device)
 
+    folder_path = os.path.join('./test_results', expname)
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+
+    model.eval()
+
+    dummy_input = torch.randn(1, args.seq_len, args.enc_in,dtype=torch.float).to(device)
+    dummy_out = torch.randn(1, args.label_len, args.enc_in,dtype=torch.float).to(device)
+    if args.model_type == 'informer':
+        dec_inp = torch.zeros([1, args.pred_len, args.enc_in], dtype=torch.float).to(device)
+        dec_inp = torch.cat([dummy_out, dec_inp], dim=1).float()
+
+    starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    repetitions = 300
+    timings=np.zeros((repetitions,1))
+    #GPU-WARM-UP
+    for _ in range(10):
+        if args.model_type == 'informer':
+            _ = model(dummy_input, dec_inp) # (B,L,C)
+        else:
+            _ = model(dummy_input)
+    # MEASURE PERFORMANCE
+    with torch.no_grad():
+        for rep in range(repetitions):
+            starter.record()
+
+            if args.use_amp:
+                with torch.cuda.amp.autocast():
+                    if args.model_type == 'informer':
+                        _ = model(dummy_input, dec_inp) # (B,L,C)
+                    else:
+                        _ = model(dummy_input) # (B,L,C)
+            else:
+                if args.model_type == 'informer':
+                    _ = model(dummy_input, dec_inp) # (B,L,C)
+                else:
+                    _ = model(dummy_input) # (B,L,C)
+
+            ender.record()
+            # WAIT FOR GPU SYNC
+            torch.cuda.synchronize()
+            curr_time = starter.elapsed_time(ender)
+            timings[rep] = curr_time
+    mean_syn = np.sum(timings) / repetitions
+    std_syn = np.std(timings)
+    mean_fps = 1000. / mean_syn
+    print(' * Mean {mean_syn:.3f}ms Std {std_syn:.3f}ms FPS {mean_fps:.2f}'.format(mean_syn=mean_syn, std_syn=std_syn, mean_fps=mean_fps))
+    print(mean_syn)
+    with open(folder_path + '/model_test.txt','a') as f:
+        f.writelines(' * Mean@1 {mean_syn:.3f}ms Std@5 {std_syn:.3f}ms FPS@1 {mean_fps:.2f}'.format(mean_syn=mean_syn, std_syn=std_syn, mean_fps=mean_fps))
+
+
+
+
+    
 
 #main
 train()
 # test()
 # pred()
+# get_inference_time()
 
 
 

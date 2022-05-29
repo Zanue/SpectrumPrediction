@@ -5,6 +5,33 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "attack",
+            "type": "python",
+            "request": "launch",
+            "program": "attack.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--model_type=rnn",
+                "--data=Spectrum",
+                "--data_path=data/psd.mat",
+                "--train_epochs=100",
+                "--learning_rate=1e-3",
+                "--seq_len=32",
+                "--label_len=0",
+                "--pred_len=128",
+                "--batch_size=32",
+                "--exp_name=0529_2",
+                "--num_workers=4",
+                "--rnn_layers=2",
+                "--train_epochs=40",
+                "--resume=checkpoint/Spectrum/rnn/0529_0_in32out128_layer2_lr0.01_bs32_epoch40/valid_best_checkpoint.pth"
+            ],
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "3"
+            }
+        },
+        {
             "name": "main",
             "type": "python",
             "request": "launch",
@@ -12,12 +39,24 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--model_type=MLP", "--data=Spectrum", "--data_path=data/psd.mat" ,
-                "--train_epochs=100", "--learning_rate=1e-3" ,
-                "--seq_len=96", "--label_len=48" ,"--pred_len=96", "--batch_size=32", "--hiden=512" ,
-                "--exp_name=0505_0_hiden512" 
+                "--model_type=MLPMixer",
+                "--data=Spectrum",
+                "--data_path=data/psd.mat",
+                "--train_epochs=100",
+                "--learning_rate=1e-2",
+                "--seq_len=32",
+                "--label_len=0",
+                "--pred_len=128",
+                "--batch_size=32",
+                "--exp_name=0529_1",
+                "--num_workers=4",
+                "--layer=2",
+                "--train_epochs=40",
+                "--use_amp"
             ],
-            "env": {"CUDA_VISIBLE_DEVICES":"0"}
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "1"
+            }
         }
     ]
 }
