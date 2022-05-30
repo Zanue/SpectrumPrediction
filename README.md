@@ -12,7 +12,7 @@ in32out128, lr1e-2, bs=32, train_epochs=40, GTX3090
 | Methods | Structure | MSE | ocpy_acc | false_alarm | missing_alarm | avarage inference time | avarage training time per epoch  | Training maximum memory usage | Params | avarage inference time with amp |
 | --- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- | ----------- |
 | MLPMixer | 2 blocks + 1 fc | 0.7032 | 0.6944 | 0.0782 | 0.2273 | 0.691ms  | 17.05s |  2579MiB | 65M | 0.912ms |
-| RNN | 2 layers + 1 fc | 0.7634 | 0.6733 | 0.1173 | 0.2094 |  2.424ms | 18.73s |  2529MiB | 65M | 2.117ms |
+| RNN | 2 layers + 1 fc | 0.7232 | 0.6876 | 0.0892 | 0.2232 |  2.424ms | 18.73s |  2529MiB | 65M | 2.117ms |
 | LSTM | 2 layers + 1 fc | 0.7787 | 0.6826 | 0.0211 | 0.2963 |  6.566ms | 19.92s |  3595MiB | 257M | 4.425ms |
 | Informer | 2 en + 1 dec | 0.7018 | 0.6938 | 0.1220 | 0.1841 |  5.624ms | 31.26s |  2905MiB | 91M | 6.071ms |
 | TCN | 2 layers + 1 fc | 0.7098 | 0.6904 | 0.0630 | 0.2466 |  3.344ms | 19.48s |  3221MiB | 209M | 3.453ms |
